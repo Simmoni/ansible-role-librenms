@@ -1,0 +1,27 @@
+---
+- name: Restart nginx
+  systemd:
+    name: nginx
+    state: restarted
+
+- name: Restart php-fpm
+  systemd:
+    name: php-fpm
+    state: restarted
+
+- name: Reload firewalld
+  systemd:
+    name: firewalld 
+    state: reloaded
+
+- name: Restart SNMPD
+  systemd:
+   name: snmpd
+   enabled: yes
+   state: restarted
+   daemon_reload: yes
+
+- name: Restart MariaDB
+  systemd:
+   name: mariadb
+   state: restarted

@@ -1,0 +1,31 @@
+---
+new_install: yes
+
+system_timzone: UTC
+
+librenms_config_user: librenms
+
+librenms_mysql_username: librenms
+librenms_mysql_password: examplepassword
+
+librenms_config_db_host: localhost
+librenms_config_db_port: 3306
+librenms_config_db_name: librenms
+librenms_config_db_socket: 
+
+librenms_config_snmp_community: public
+librenms_config_auth_mechanism: mysql
+
+librenms_config_nets:
+  - "10.0.0.0/16"
+
+librenms_config_discovery_by_ip: true
+librenms_config_update: 1
+
+librenms_config_smokeping_dir: /var/lib/smokeping
+librenms_config_smokeping_pings: 20
+librenms_config_smokeping_integration: true
+librenms_config_enable_billing: 1
+librenms_config_oxidized_enabled: true
+librenms_config_oxidized_url: "http://{{ ansible_fqdn }}:8888/oxidized"
+librenms_config_oxidized_features_versioning: true

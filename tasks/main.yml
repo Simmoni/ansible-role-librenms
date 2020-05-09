@@ -1,0 +1,350 @@
+---
+- name: Install EPEL repo
+  yum:
+   name:
+   - epel-release
+
+- name: Install packages required by LibreNMS
+  yum:
+   name:
+   - firewalld
+   - git
+   - cronie
+   - fping
+   - jwhois
+   - ImageMagick
+   - mtr
+   - MySQL-python
+   - net-snmp
+   - net-snmp-utils
+   - nmap
+   - python-memcached
+   - rrdtool
+   - policycoreutils-python
+   - python3
+   - python-setuptools
+   - python36-PyMySQL
+   - httpd
+   - mariadb
+   - mariadb-server
+   - unzip
+   - composer
+   - nginx
+   - yum-utils
+   state: installed
+
+- name: Install remi-repo
+  yum:
+    name: http://rpms.remirepo.net/enterprise/remi-release-7.rpm
+    state: installed
+
+- name: Enable remi-repo
+  command: yum-config-manager --enable remi-php73
+
+- name: Install packages from repo remi-php73
+  yum:
+   name:
+   - mod_php
+   - php
+   - php-cli
+   - php-common
+   - php-curl
+   - php-gd
+   - php-mbstring
+   - php-process
+   - php-snmp
+   - php-xml
+   - php-zip
+   - php-memcached
+   - php-mysqlnd
+   - php-fpm
+   state: installed
+
+- name: Start firewalld
+  systemd:
+   name: firewalld
+   enabled: yes
+   state: started
+
+- name: Set timezone
+  timezone:
+    name: "{{ system_timzone }}"
+ 
+- name: Create LibreNMS user
+  user:
+   name: librenms
+   createhome: no
+   system: yes
+   home: /home/librenms
+   state: present
+   append: yes
+
+- name: Add LibreNMS user to group
+  user:
+   name: librenms
+   append: yes
+   groups: nginx
+
+- name: Add user nginx to group
+  user:
+   name: nginx
+   append: yes
+   groups: librenms
+
+- name: Set permissions /opt/librenms
+  file:
+    path: /opt/librenms
+    owner: librenms
+    group: librenms
+    state: directory
+    mode: '0770'
+
+- name: Check if librenms directory exists
+  stat: 
+    path: /opt/librenms/.git
+  register: status
+
+- name: Clone LibreNMS from git
+  git:
+    repo: 'https://github.com/librenms/librenms.git'
+    dest: /opt/librenms
+    clone: yes
+  become_user: librenms
+  when: status.stat.exists == False
+
+- name: Set ACL - Default Group
+  acl:
+    path: "{{item}}"
+    etype: group
+    entity: librenms
+    permissions: rwx
+    default: yes
+    state: present
+    recursive: yes
+  loop:
+  - /opt/librenms/rrd
+  - /opt/librenms/logs
+  - /opt/librenms/bootstrap/cache
+  - /opt/librenms/storage
+
+- name: Set apache to owner of /var/lib/php/session
+  file:
+    path: /var/lib/php/session
+    group: apache
+
+- name: Install using composer wrapper
+  shell: php /opt/librenms/scripts/composer_wrapper.php install --no-dev
+  become_user: librenms
+  when: status.stat.exists == False
+
+- name: Install pip requirements
+  pip:
+    chdir: /opt/librenms
+    requirements: requirements.txt
+    executable: pip3
+
+
+- name: Start MariaDB
+  systemd:
+    name: mariadb 
+    enabled: yes
+    state: started
+
+- name: Create LibreNMS DB
+  mysql_db: 
+    login_user: root 
+    name: "{{ librenms_config_db_name }}"
+    encoding: utf8
+    collation: utf8_unicode_ci
+    state: present
+
+- name: Delete Test DB
+  mysql_db: 
+    login_user: root 
+    name: test
+    state: absent
+
+- name: Create DB user
+  mysql_user:
+    name: "{{ librenms_mysql_username }}"
+    password: "{{ librenms_mysql_password }}"
+    priv: "{{ librenms_config_db_name }}.*:ALL,GRANT"
+    state: present
+  no_log: true
+
+- name: Add block in my.cnf
+  blockinfile:
+    path: /etc/my.cnf
+    insertafter: '^socket'
+    block: |
+      innodb_file_per_table=1
+      lower_case_table_names=0
+  notify: Restart MariaDB
+
+- include: php-fpm.yml
+
+- name: Set DateTimezone in php.ini
+  lineinfile: 
+    path: /etc/php.ini
+    regexp: '^;date.timezone ='
+    line: 'date.timezone = {{ system_timzone }}'
+    state: present
+  notify: Restart php-fpm
+
+- name: Create  Librenms nginx vhost file
+  template:
+    src: templates/librenms.conf.j2
+    dest: /etc/nginx/conf.d/librenms.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart nginx
+
+- name: Remove default nginx config
+  file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+  notify: Restart nginx
+
+- name: Enable nginx
+  systemd:
+    name: nginx
+    enabled: yes
+    state: started
+
+- name: SELinux - httpd_sys_content_t context /opt/librenms
+  sefcontext:
+    target: "{{ item }}"
+    setype: httpd_sys_content_t
+    state: present
+    ftype: a
+  register: selinux_httpd_sys_content_t
+  loop:
+  - /opt/librenms/logs(/.*)?
+  - /opt/librenms/rrd(/.*)?
+  - /opt/librenms/storage(/.*)?
+  - /opt/librenms/bootstrap/cache(/.*)?
+
+- name: SELinux - httpd_sys_rw_content_t context /opt/librenms
+  sefcontext:
+    target: "{{ item }}"
+    setype: httpd_sys_rw_content_t
+    state: present
+    ftype: a
+  register: selinux_httpd_sys_rw_content_t
+  loop:
+  - /opt/librenms/logs(/.*)?
+  - /opt/librenms/rrd(/.*)?
+  - /opt/librenms/storage(/.*)?
+  - /opt/librenms/bootstrap/cache(/.*)?
+
+- name: Run restorecon in /opt/librenms
+  command: "{{ item }}"
+  loop:
+  - restorecon -RFvv /opt/librenms/logs/
+  - restorecon -RFvv /opt/librenms/rrd/
+  - restorecon -RFvv /opt/librenms/storage/
+  - restorecon -RFvv /opt/librenms/bootstrap/cache/
+  - restorecon -RFv /opt/librenms
+  when: (selinux_httpd_sys_content_t.changed) or
+        (selinux_httpd_sys_rw_content_t.changed)
+
+- name: Setbool
+  seboolean:
+    name: "{{ item }}"
+    state: yes
+    persistent: yes
+  loop:
+  - httpd_can_sendmail
+  - httpd_execmem
+
+- name: Create librenms config file
+  template:
+    src: templates/config.php.j2
+    dest: /opt/librenms/config.php
+    owner: librenms
+    group: librenms
+  when: not new_install
+  notify: Restart php-fpm
+
+- name: check if http_fping semodule exists on server
+  stat:
+    path: /etc/selinux/targeted/active/modules/400/http_fping
+  register: http_fping
+
+- name: Copy http_ping file
+  copy:
+    src: http_fping.tt
+    dest: /opt/http_fping.tt
+  when: not http_fping.stat.exists
+
+- name: Create selinux module 
+  command: "{{ item }}"
+  loop:
+  - checkmodule -M -m -o /opt/http_fping.mod /opt/http_fping.tt
+  - semodule_package -o /opt/http_fping.pp -m /opt/http_fping.mod
+  - semodule -i /opt/http_fping.pp
+  when: not http_fping.stat.exists
+
+- name: remove http_fping files
+  file:
+    path: /opt/http_fping.{{ item }}
+    state: absent
+  loop:
+   - pp
+   - tt
+   - mod
+  when: not http_fping.stat.exists
+
+- name: Open firewall 
+  firewalld: 
+    zone: public
+    service: "{{ item }}"
+    permanent: yes
+    immediate: yes
+    state: enabled
+  loop:
+   - http
+  notify: Reload firewalld
+
+- name: Copy snmpd.conf
+  copy:
+    remote_src: yes
+    src: /opt/librenms/snmpd.conf.example
+    dest: /etc/snmp/snmpd.conf
+
+- name: Change community string
+  replace:
+    path: /etc/snmp/snmpd.conf
+    regexp: 'helloworld'
+    replace: 'public'
+
+- name: Download distro
+  get_url:
+    url: https://raw.githubusercontent.com/librenms/librenms-agent/master/snmp/distro
+    dest: /usr/bin/distro
+    mode: "+x"
+  notify: Restart SNMPD
+
+- name: Enable SNMPD
+  systemd:
+    name: snmpd
+    enabled: yes
+    state: started
+
+- name: Copy logrotate files
+  copy:
+    remote_src: yes
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+  loop:
+   - { src: '/opt/librenms/librenms.nonroot.cron', dest: '/etc/cron.d/librenms' }
+   - { src: '/opt/librenms/misc/librenms.logrotate', dest: '/etc/logrotate.d/librenms' }
+
+- name: Installation complete
+  debug:
+    msg: "Installation is completed.
+         Navigate to the url of the server, and finish the prompts.
+         You might have to create the config.php manually and set permissionms for this file 'chown librenms:librenms /opt/librenms/config.php'.
+         If migrating data to a new server, import the database and the rrd files, and run 'php /opt/librenms/validate.php' after migrating all data".
+  when: status.stat.exists == False

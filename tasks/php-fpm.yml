@@ -1,0 +1,54 @@
+---
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: ^user =
+    line: user = nginx
+    state: present
+  notify: Restart php-fpm
+  
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: ^group =
+    line: group = apache
+    state: present
+  notify: Restart php-fpm
+
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: (.*)listen = 127.0.0.1:9000
+    line: listen = /run/php-fpm/php-fpm.sock
+    state: present
+  notify: Restart php-fpm
+  
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: (.*)listen.owner =
+    line: listen.owner = nginx
+    state: present
+  notify: Restart php-fpm
+
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: (.*)listen.group =
+    line: listen.group = nginx
+    state: present
+  notify: Restart php-fpm
+
+- name: Configure /etc/php-fpm.d/www.conf
+  lineinfile:
+    path: /etc/php-fpm.d/www.conf
+    regexp: (.*)listen.mode = 
+    line: listen.mode = 0660
+    state: present
+  notify: Restart php-fpm
+
+- name: Enable php-fpm service
+  systemd:
+   name: php-fpm
+   enabled: yes
+   state: started
